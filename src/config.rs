@@ -11,6 +11,7 @@ pub struct ClientConfig {
     pub max_retries: u32,
     pub log_level: LogLevel,
     pub auth_method: AuthMethod,
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,7 @@ impl ClientConfig {
             max_retries: 2,
             log_level: LogLevel::Warn,
             auth_method: AuthMethod::Anthropic,
+            proxy_url: None,
         }
     }
     
@@ -72,6 +74,11 @@ impl ClientConfig {
                 _ => {} // Keep default
             }
         }
+
+        // Optional proxy URL
+        if let Ok(proxy_url) = std::env::var("ANTHROPIC_PROXY_URL") {
+            config.proxy_url = Some(proxy_url);
+        }
         
         Ok(config)
     }
@@ -106,6 +113,12 @@ impl ClientConfig {
         self
     }
     
+    /// Set the proxy URL (e.g. "http://proxy.example.com:8080")
+    pub fn with_proxy_url(mut self, proxy_url: impl Into<String>) -> Self {
+        self.proxy_url = Some(proxy_url.into());
+        self
+    }
+
     /// Configure for custom gateway (Bearer token + base URL)
     pub fn for_custom_gateway(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();

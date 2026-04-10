@@ -16,9 +16,19 @@ impl HttpClient {
     pub fn new(config: ClientConfig) -> Result<Self> {
         // Validate configuration before creating client
         config.validate()?;
-        
-        let client = Client::builder()
-            .timeout(config.timeout)
+
+        let mut builder = Client::builder().timeout(config.timeout);
+
+        // Apply proxy if configured
+        if let Some(ref proxy_url) = config.proxy_url {
+            let proxy = reqwest::Proxy::all(proxy_url.as_str())
+                .map_err(|e| AnthropicError::Configuration {
+                    message: format!("Invalid proxy URL '{}': {}", proxy_url, e),
+                })?;
+            builder = builder.proxy(proxy);
+        }
+
+        let client = builder
             .build()
             .map_err(|e| AnthropicError::Connection { message: e.to_string() })?;
             
