@@ -1,5 +1,4 @@
 use anthropic_sdk::{
-    types::{ContentBlockParam, MessageContent},
     AnthropicError, File, FileConstraints, RetryCondition, RetryExecutor, RetryPolicy, RetryResult,
     TokenCounter,
 };
@@ -61,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut processed_files = Vec::new();
 
-    for (filename, mime_type, content) in sample_documents {
+    for (filename, _mime_type, content) in sample_documents {
         let start_time = Instant::now();
 
         // Create file from bytes - using correct API

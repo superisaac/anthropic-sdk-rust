@@ -1,22 +1,19 @@
 use anthropic_sdk::{
-    api_retry,
-    types::{ContentBlockParam, MessageContent, ToolChoice},
-    Anthropic, MessageCreateBuilder, RetryExecutor, TokenCounter, Tool, ToolExecutor, ToolFunction,
-    ToolRegistry,
+    api_retry, TokenCounter, Tool, ToolExecutor, ToolFunction, ToolRegistry, ToolResult,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Weather tool that simulates fetching weather data
 struct WeatherTool;
 
 #[async_trait]
 impl ToolFunction for WeatherTool {
-    async fn call(
+    async fn execute(
         &self,
         parameters: Value,
-    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
         let location = parameters
             .get("location")
             .and_then(|v| v.as_str())
@@ -69,7 +66,7 @@ impl ToolFunction for WeatherTool {
             }
         };
 
-        Ok(weather_data)
+        Ok(ToolResult::success("weather_id", weather_data.to_string()))
     }
 }
 
@@ -78,10 +75,10 @@ struct CalculatorTool;
 
 #[async_trait]
 impl ToolFunction for CalculatorTool {
-    async fn call(
+    async fn execute(
         &self,
         parameters: Value,
-    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
         let expression = parameters
             .get("expression")
             .and_then(|v| v.as_str())
@@ -93,11 +90,13 @@ impl ToolFunction for CalculatorTool {
             Err(e) => return Err(format!("Calculation error: {}", e).into()),
         };
 
-        Ok(json!({
+        let result_json = json!({
             "expression": expression,
             "result": result,
             "explanation": format!("{} = {}", expression, result)
-        }))
+        });
+
+        Ok(ToolResult::success("calc_id", result_json.to_string()))
     }
 }
 
@@ -155,10 +154,10 @@ struct TimeTool;
 
 #[async_trait]
 impl ToolFunction for TimeTool {
-    async fn call(
+    async fn execute(
         &self,
         parameters: Value,
-    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
         let timezone = parameters
             .get("timezone")
             .and_then(|v| v.as_str())
@@ -176,12 +175,14 @@ impl ToolFunction for TimeTool {
             current_time % 60
         );
 
-        Ok(json!({
+        let result = json!({
             "timezone": timezone,
             "current_time": formatted_time,
             "unix_timestamp": current_time,
             "format": "YYYY-MM-DD HH:MM:SS"
-        }))
+        });
+
+        Ok(ToolResult::success("time_id", result.to_string()))
     }
 }
 
@@ -210,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .required("location")
     .build();
 
-    registry.register_tool(weather_tool, Box::new(WeatherTool))?;
+    registry.register("get_weather", weather_tool, Box::new(WeatherTool))?;
 
     // Register calculator tool
     let calculator_tool = Tool::new("calculate", "Perform mathematical calculations")
@@ -222,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .required("expression")
         .build();
 
-    registry.register_tool(calculator_tool, Box::new(CalculatorTool))?;
+    registry.register("calculate", calculator_tool, Box::new(CalculatorTool))?;
 
     // Register time tool
     let time_tool = Tool::new("get_time", "Get current time information")
@@ -233,16 +234,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .build();
 
-    registry.register_tool(time_tool, Box::new(TimeTool))?;
+    registry.register("get_time", time_tool, Box::new(TimeTool))?;
 
     // Create tool executor
-    let executor = ToolExecutor::new(registry);
+    let executor = ToolExecutor::new(Arc::new(registry));
 
     println!(
         "🛠️  Registered {} tools:",
-        executor.registry().list_tools().len()
+        executor.registry().tool_names().len()
     );
-    for tool_name in executor.registry().list_tools() {
+    for tool_name in executor.registry().tool_names() {
         println!("  • {}", tool_name);
     }
 
@@ -254,84 +255,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🌤️  Scenario 1: Weather Query");
     println!("------------------------------");
 
-    let weather_request = json!({
-        "id": "weather_001",
-        "name": "get_weather",
-        "input": {
-            "location": "San Francisco, CA"
-        }
-    });
+    let weather_request = anthropic_sdk::types::ToolUse {
+        id: "weather_001".to_string(),
+        name: "get_weather".to_string(),
+        input: json!({"location": "San Francisco, CA"}),
+    };
 
-    let weather_start = token_counter.start_request("claude-3-5-sonnet-latest");
-    let weather_result = executor.execute_tool(&weather_request).await?;
+    let _weather_start = token_counter.start_request("claude-3-5-sonnet-latest");
+    let weather_results = executor.execute_multiple(&[weather_request]).await;
     println!("Request: Get weather for San Francisco");
-    println!("Result: {}", serde_json::to_string_pretty(&weather_result)?);
+    if let Some(Ok(result)) = weather_results.first() {
+        println!("Result: {:?}", result.content);
+    }
 
     // Scenario 2: Mathematical calculation
     println!("\n🧮 Scenario 2: Mathematical Calculation");
     println!("---------------------------------------");
 
-    let calc_request = json!({
-        "id": "calc_001",
-        "name": "calculate",
-        "input": {
-            "expression": "25 + 17 * 2"
-        }
-    });
+    let calc_request = anthropic_sdk::types::ToolUse {
+        id: "calc_001".to_string(),
+        name: "calculate".to_string(),
+        input: json!({"expression": "25 + 17 * 2"}),
+    };
 
-    let calc_result = executor.execute_tool(&calc_request).await?;
+    let calc_results = executor.execute_multiple(&[calc_request]).await;
     println!("Request: Calculate 25 + 17 * 2");
-    println!("Result: {}", serde_json::to_string_pretty(&calc_result)?);
+    if let Some(Ok(result)) = calc_results.first() {
+        println!("Result: {:?}", result.content);
+    }
 
     // Scenario 3: Time query
     println!("\n⏰ Scenario 3: Time Information");
     println!("-------------------------------");
 
-    let time_request = json!({
-        "id": "time_001",
-        "name": "get_time",
-        "input": {
-            "timezone": "PST"
-        }
-    });
+    let time_request = anthropic_sdk::types::ToolUse {
+        id: "time_001".to_string(),
+        name: "get_time".to_string(),
+        input: json!({"timezone": "PST"}),
+    };
 
-    let time_result = executor.execute_tool(&time_request).await?;
+    let time_results = executor.execute_multiple(&[time_request]).await;
     println!("Request: Get current time in PST");
-    println!("Result: {}", serde_json::to_string_pretty(&time_result)?);
+    if let Some(Ok(result)) = time_results.first() {
+        println!("Result: {:?}", result.content);
+    }
 
     // Scenario 4: Parallel tool execution
     println!("\n⚡ Scenario 4: Parallel Tool Execution");
     println!("-------------------------------------");
 
     let parallel_requests = vec![
-        json!({
-            "id": "parallel_weather",
-            "name": "get_weather",
-            "input": {"location": "New York, NY"}
-        }),
-        json!({
-            "id": "parallel_calc",
-            "name": "calculate",
-            "input": {"expression": "100 / 4"}
-        }),
-        json!({
-            "id": "parallel_time",
-            "name": "get_time",
-            "input": {"timezone": "EST"}
-        }),
+        anthropic_sdk::types::ToolUse {
+            id: "parallel_weather".to_string(),
+            name: "get_weather".to_string(),
+            input: json!({"location": "New York, NY"}),
+        },
+        anthropic_sdk::types::ToolUse {
+            id: "parallel_calc".to_string(),
+            name: "calculate".to_string(),
+            input: json!({"expression": "100 / 4"}),
+        },
+        anthropic_sdk::types::ToolUse {
+            id: "parallel_time".to_string(),
+            name: "get_time".to_string(),
+            input: json!({"timezone": "EST"}),
+        },
     ];
 
     let start_time = std::time::Instant::now();
-    let parallel_results = executor.execute_tools_parallel(&parallel_requests).await?;
+    let parallel_results = executor.execute_multiple(&parallel_requests).await;
     let execution_time = start_time.elapsed();
 
     println!("Executed {} tools in parallel:", parallel_results.len());
     for (i, result) in parallel_results.iter().enumerate() {
-        println!(
-            "  Tool {}: {}",
-            i + 1,
-            result.get("success").unwrap_or(&json!(false))
-        );
+        println!("  Tool {}: {}", i + 1, result.is_ok());
     }
     println!("Total execution time: {:?}", execution_time);
 
@@ -339,17 +336,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n❌ Scenario 5: Error Handling");
     println!("-----------------------------");
 
-    let error_request = json!({
-        "id": "error_001",
-        "name": "calculate",
-        "input": {
-            "expression": "10 / 0"  // Division by zero
-        }
-    });
+    let error_request = anthropic_sdk::types::ToolUse {
+        id: "error_001".to_string(),
+        name: "calculate".to_string(),
+        input: json!({"expression": "10 / 0"}), // Division by zero
+    };
 
-    match executor.execute_tool(&error_request).await {
-        Ok(result) => println!("Unexpected success: {}", result),
-        Err(e) => println!("Expected error handled: {}", e),
+    let error_results = executor.execute_multiple(&[error_request]).await;
+    match error_results.first() {
+        Some(Ok(result)) => println!("Result (may be error): {:?}", result.is_error),
+        Some(Err(e)) => println!("Expected error handled: {}", e),
+        None => println!("No result"),
     }
 
     // Performance metrics
@@ -376,7 +373,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nTool Registry Stats:");
     println!(
         "  • Registered tools: {}",
-        executor.registry().list_tools().len()
+        executor.registry().tool_names().len()
     );
     println!("  • Tools executed: 6 (4 individual + 3 parallel)");
     println!("  • Error scenarios: 1 handled");

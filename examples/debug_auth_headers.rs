@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use anthropic_sdk::{Anthropic, ClientConfig, MessageCreateBuilder};
 use reqwest::header::{HeaderMap, HeaderValue};
 use std::env;

@@ -8,8 +8,7 @@
 //! - Create reusable tool functions
 
 use anthropic_sdk::{
-    tool_function, Anthropic, Result as AnthropicResult, Tool, ToolChoice, ToolExecutionConfig,
-    ToolExecutor, ToolFunction, ToolRegistry, ToolResult,
+    tool_function, Tool, ToolExecutionConfig, ToolExecutor, ToolFunction, ToolRegistry, ToolResult,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -112,7 +111,7 @@ fn create_time_tool() -> Box<dyn ToolFunction> {
 }
 
 #[tokio::main]
-async fn main() -> AnthropicResult<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 

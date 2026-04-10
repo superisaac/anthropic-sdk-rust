@@ -3,7 +3,6 @@ use anthropic_sdk::{
 };
 use dotenvy::dotenv;
 use std::time::Duration;
-use tokio::time::timeout;
 
 /// Helper function to extract text content from response
 fn extract_text_from_content(content: &[ContentBlock]) -> String {
@@ -42,6 +41,7 @@ fn get_model_name() -> String {
 /// Skip test if no token is available
 macro_rules! require_token {
     ($client:ident) => {
+        #[allow(unused_variables)]
         let $client = match create_custom_client() {
             Some(client) => client,
             None => {

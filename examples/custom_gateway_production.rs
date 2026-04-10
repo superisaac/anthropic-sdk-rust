@@ -1,9 +1,8 @@
-use anthropic_sdk::types::ContentBlock;
-use anthropic_sdk::{Anthropic, AuthMethod, ClientConfig, MessageCreateBuilder};
+use anthropic_sdk::{types::ContentBlock, Anthropic, ClientConfig, MessageCreateBuilder};
 use dotenvy::dotenv;
 use std::time::Duration;
 
-// Helper function to extract text content from response
+#[allow(dead_code)]
 fn extract_text_from_content(content: &[ContentBlock]) -> String {
     content
         .iter()
@@ -13,12 +12,6 @@ fn extract_text_from_content(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Get model name from environment or use default
-fn get_model_name() -> String {
-    dotenv().ok();
-    std::env::var("CUSTOM_MODEL_NAME").unwrap_or_else(|_| "claude-3-5-sonnet-latest".to_string())
 }
 
 #[tokio::main]
@@ -72,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn test_client(
     client: &Anthropic,
     method_name: &str,

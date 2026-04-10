@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn test_anthropic_auth() -> Result<(), Box<dyn std::error::Error>> {
     match env::var("ANTHROPIC_API_KEY") {
-        Ok(api_key) => {
+        Ok(_api_key) => {
             println!("   📡 URL: https://api.anthropic.com");
             println!("   🔑 Using x-api-key authentication");
 

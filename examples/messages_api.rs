@@ -1,5 +1,5 @@
 use anthropic_sdk::{
-    Anthropic, ContentBlockParam, MessageContent, MessageCreateBuilder, Model, Result, Role,
+    Anthropic, ContentBlockParam, MessageContent, MessageCreateBuilder, Model, Result,
 };
 
 #[tokio::main]
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 async fn demonstrate_basic_message() -> Result<()> {
     println!("   Creating a simple message request...");
 
-    let client = Anthropic::new("demo-api-key")?;
+    let _client = Anthropic::new("demo-api-key")?;
 
     let params = MessageCreateBuilder::new("claude-3-5-sonnet-latest", 1024)
         .user("Hello, Claude! How are you today?")
@@ -130,7 +130,7 @@ async fn demonstrate_builder_api() -> Result<()> {
     let client = Anthropic::new("demo-api-key")?;
 
     // This creates a builder that's ready to send
-    let builder = client
+    let _builder = client
         .messages()
         .create_with_builder("claude-3-5-sonnet-latest", 1024)
         .user("What's the weather like today?")

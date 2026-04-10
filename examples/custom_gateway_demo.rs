@@ -1,4 +1,4 @@
-use anthropic_sdk::{Anthropic, AuthMethod, ClientConfig, MessageCreateBuilder};
+use anthropic_sdk::{Anthropic, AuthMethod, ClientConfig};
 use std::env;
 use std::time::Duration;
 

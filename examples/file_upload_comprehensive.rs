@@ -1,12 +1,9 @@
 use anthropic_sdk::{
-    to_file, Anthropic, ContentBlockParam, File, FileBuilder, FileConstraints, FileError,
-    FileSource, MessageContent, MessageCreateBuilder,
+    to_file, ContentBlockParam, File, FileBuilder, FileConstraints, FileError, FileSource,
+    MessageContent, MessageCreateBuilder,
 };
 use base64::Engine;
 use bytes::Bytes;
-use mime::Mime;
-use std::path::Path;
-use tokio::fs;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,8 +1,7 @@
 use anthropic_sdk::{
-    to_file,
     types::{ContentBlockParam, MessageContent},
     AnthropicError, File, FileConstraints, RetryCondition, RetryExecutor, RetryPolicy, RetryResult,
-    TokenCounter, Tool, ToolExecutor, ToolFunction, ToolRegistry,
+    TokenCounter, Tool, ToolExecutor, ToolFunction, ToolRegistry, ToolResult,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -17,7 +16,7 @@ impl ToolFunction for SimpleAnalyzerTool {
     async fn execute(
         &self,
         parameters: Value,
-    ) -> Result<anthropic_sdk::ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
         let text = parameters
             .get("text")
             .and_then(|v| v.as_str())
@@ -37,11 +36,7 @@ impl ToolFunction for SimpleAnalyzerTool {
             }
         });
 
-        Ok(anthropic_sdk::ToolResult {
-            content: vec![anthropic_sdk::types::ContentBlock::Text {
-                text: result.to_string(),
-            }],
-        })
+        Ok(ToolResult::success("analyzer_id", result.to_string()))
     }
 }
 
@@ -90,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     registry.register("analyze_text", analyzer_tool, Box::new(SimpleAnalyzerTool))?;
-    let tool_executor = ToolExecutor::new(Arc::new(registry));
+    let tool_executor = Arc::new(ToolExecutor::new(Arc::new(registry)));
 
     println!("✅ Tool registry created");
     println!("✅ Text analyzer tool registered");
@@ -112,34 +107,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start_time = Instant::now();
 
         // Create file with appropriate MIME type
-        let mime_type = match filename.split('.').last() {
-            Some("txt") => "text/plain",
-            Some("csv") => "text/csv",
-            Some("json") => "application/json",
-            _ => "text/plain",
-        };
-
-        let file = File::from_bytes(content.as_bytes().to_vec(), filename, mime_type)?;
+        let file = File::from_bytes(filename, content.as_bytes(), None)?;
 
         // Validate file with constraints
-        let constraints = FileConstraints::new()
-            .max_size(1024 * 1024) // 1MB
-            .allowed_types(vec![
-                "text/plain".to_string(),
-                "text/csv".to_string(),
-                "application/json".to_string(),
-            ]);
+        let constraints = FileConstraints {
+            max_size: 1024 * 1024, // 1MB
+            allowed_types: Some(vec![
+                "text/plain".parse().unwrap(),
+                "text/csv".parse().unwrap(),
+                "application/json".parse().unwrap(),
+            ]),
+            require_hash: false,
+        };
 
-        constraints.validate(&file)?;
+        file.validate(&constraints)?;
 
         let processing_time = start_time.elapsed();
 
         println!(
             "📄 Processed: {} ({} bytes, {}) in {:?}",
-            file.name(),
-            file.size(),
-            file.mime_type(),
-            processing_time
+            file.name, file.size, file.mime_type, processing_time
         );
 
         processed_files.push(file);
@@ -152,41 +139,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=================================================");
 
     for file in &processed_files {
-        let file_content = String::from_utf8_lossy(&file.to_bytes()?);
-        let analysis_request = vec![json!({
-            "name": "analyze_text",
-            "input": { "text": file_content }
-        })];
+        let file_bytes = file.to_bytes().await?;
+        let file_content = String::from_utf8_lossy(&file_bytes).to_string();
+        let analysis_request = vec![anthropic_sdk::types::ToolUse {
+            id: format!("analyze_{}", file.name),
+            name: "analyze_text".to_string(),
+            input: json!({ "text": file_content }),
+        }];
 
         // Execute tool with retry logic
+        let tool_executor_clone = Arc::clone(&tool_executor);
         let result = retry_executor
             .execute(|| {
                 let request = analysis_request.clone();
+                let executor = Arc::clone(&tool_executor_clone);
                 async move {
-                    tool_executor
-                        .execute_multiple(&request)
-                        .await
-                        .map_err(|e| AnthropicError::Other(e.to_string()))
+                    let results = executor.execute_multiple(&request).await;
+                    // Convert Vec<Result<ToolResult, ToolError>> to a single Result
+                    let first = results.into_iter().next();
+                    match first {
+                        Some(Ok(r)) => Ok(r),
+                        Some(Err(e)) => Err(AnthropicError::Other(e.to_string())),
+                        None => Err(AnthropicError::Other("No results".to_string())),
+                    }
                 }
             })
             .await;
 
         match result {
-            RetryResult::Success(results) => {
-                if let Some(first_result) = results.first() {
-                    println!(
-                        "✅ Analysis for {}: Tool executed successfully",
-                        file.name()
-                    );
-                    if let Some(content) = first_result.get("success") {
-                        if content.as_bool().unwrap_or(false) {
-                            println!("   📊 Tool execution completed");
-                        }
-                    }
-                }
+            RetryResult::Success(_tool_result) => {
+                println!("✅ Analysis for {}: Tool executed successfully", file.name);
             }
             RetryResult::Failed(error) => {
-                println!("❌ Analysis for {}: {}", file.name(), error);
+                println!("❌ Analysis for {}: {}", file.name, error);
             }
         }
     }
@@ -197,19 +182,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate file-to-message integration
     let sample_image_data = vec![0u8; 100]; // Simulated image data
-    let image_file = to_file(&sample_image_data, "sample.png", "image/png")?;
+    let image_file = File::from_bytes("sample.png", sample_image_data, None)?;
 
+    let image_content_block = ContentBlockParam::image_file(image_file.clone()).await?;
     let message_content = MessageContent::Blocks(vec![
         ContentBlockParam::text("Please analyze this image:"),
-        ContentBlockParam::image_file(image_file.clone()),
+        image_content_block,
         ContentBlockParam::text("What can you tell me about it?"),
     ]);
 
     println!("✅ Created multi-part message with file attachment");
     println!(
         "📄 Image file: {} ({} bytes)",
-        image_file.name(),
-        image_file.size()
+        image_file.name, image_file.size
     );
 
     if let MessageContent::Blocks(blocks) = &message_content {

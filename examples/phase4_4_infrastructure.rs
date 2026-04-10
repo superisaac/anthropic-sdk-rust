@@ -1,6 +1,6 @@
 use anthropic_sdk::{
-    api_retry, default_retry, AnthropicError, RetryCondition, RetryExecutor, RetryPolicy,
-    RetryResult, TokenCounter,
+    default_retry, AnthropicError, RetryCondition, RetryExecutor, RetryPolicy, RetryResult,
+    TokenCounter,
 };
 use std::time::Duration;
 

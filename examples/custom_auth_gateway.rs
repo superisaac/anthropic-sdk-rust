@@ -1,21 +1,7 @@
-use anthropic_sdk::types::ContentBlock;
-use anthropic_sdk::{Anthropic, ClientConfig, MessageCreateBuilder};
+use anthropic_sdk::{Anthropic, ClientConfig};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 use std::env;
-use std::time::Duration;
-
-// Helper function to extract text content from response
-fn extract_text_from_content(content: &[ContentBlock]) -> String {
-    content
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
 
 /// Example demonstrating custom authentication patterns for gateway integrations
 /// This shows various ways to authenticate with custom gateway endpoints
@@ -25,8 +11,8 @@ fn extract_text_from_content(content: &[ContentBlock]) -> String {
 ///   export CUSTOM_BASE_URL=https://your-gateway.example.com/v1/anthropic
 ///   cargo run --example custom_auth_gateway
 
-#[derive(Debug, Clone)]
 /// Custom HTTP client with custom gateway authentication
+#[derive(Debug, Clone)]
 struct CustomAnthropicClient {
     api_key: String,
     base_url: String,
@@ -76,15 +62,15 @@ impl CustomAnthropicClient {
 
     async fn test_custom_headers(&self) -> Result<(), Box<dyn std::error::Error>> {
         let custom_headers = vec![
-            ("x-api-key", &self.api_key),
-            ("custom-token", &self.api_key),
-            ("x-custom-token", &self.api_key),
+            ("x-api-key", self.api_key.clone()),
+            ("custom-token", self.api_key.clone()),
+            ("x-custom-token", self.api_key.clone()),
         ];
 
         for (header_name, token) in custom_headers {
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            headers.insert(header_name, HeaderValue::from_str(token)?);
+            headers.insert(header_name, HeaderValue::from_str(&token)?);
 
             let response = self.send_test_request(headers).await;
             println!("      ✅ {}: {:?}", header_name, response.is_ok());
@@ -94,7 +80,6 @@ impl CustomAnthropicClient {
 
     async fn test_api_key_variations(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Test query parameter
-        let url_with_key = format!("{}?api_key={}", self.base_url, self.api_key);
         println!("      ✅ Query param: Testing...");
 
         // Test in request body
@@ -144,8 +129,6 @@ fn show_configuration_examples() {
 
 /// Test authentication with the Anthropic Rust SDK
 async fn test_with_anthropic_sdk() -> Result<(), Box<dyn std::error::Error>> {
-    use anthropic_sdk::{Anthropic, ClientConfig};
-
     let api_key = env::var("CUSTOM_BEARER_TOKEN")
         .or_else(|_| env::var("ANTHROPIC_API_KEY"))
         .expect("Need CUSTOM_BEARER_TOKEN or ANTHROPIC_API_KEY");
@@ -160,17 +143,17 @@ async fn test_with_anthropic_sdk() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .messages()
-        .model("claude-3-5-sonnet-latest")
-        .max_tokens(20)
+        .create_with_builder("claude-3-5-sonnet-latest", 20)
         .user("Test message")
         .send()
         .await?;
 
     println!("✅ SDK test successful!");
-    println!(
-        "📝 Response: {}",
-        response.content.first().unwrap().text.as_ref().unwrap()
-    );
+    if let Some(block) = response.content.first() {
+        if let anthropic_sdk::types::ContentBlock::Text { text } = block {
+            println!("📝 Response: {}", text);
+        }
+    }
 
     Ok(())
 }
@@ -194,11 +177,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     custom_client.test_auth_formats().await?;
 
     // Test with the SDK
-    println!("\n" + "=".repeat(60).as_str());
+    println!("\n{}", "=".repeat(60));
     test_with_anthropic_sdk().await?;
 
     // Show configuration help
-    println!("\n" + "=".repeat(60).as_str());
+    println!("\n{}", "=".repeat(60));
     show_configuration_examples();
 
     println!("\n🎯 Next steps:");

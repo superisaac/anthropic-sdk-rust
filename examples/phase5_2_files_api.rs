@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================");
 
     // Initialize client (would normally use real API key)
-    let client = match Anthropic::from_env() {
+    let _client = match Anthropic::from_env() {
         Ok(client) => client,
         Err(_) => {
             println!("⚠️  ANTHROPIC_API_KEY not set. This is a demo of the Files API structure.");

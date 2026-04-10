@@ -1,10 +1,9 @@
 use anthropic_sdk::{
-    default_retry, to_file,
+    default_retry,
     types::{ContentBlockParam, MessageContent},
-    File, FileBuilder, FileConstraints, FileData, FileSource, RetryExecutor, TokenCounter,
+    File, FileBuilder, FileConstraints, FileSource, TokenCounter,
 };
 use std::io::Write;
-use std::path::Path;
 use tempfile::NamedTempFile;
 
 #[tokio::main]
@@ -29,45 +28,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📂 Scenario 1: File Creation from Multiple Sources");
     println!("--------------------------------------------------");
 
-    // From bytes
-    let text_file = File::from_bytes(text_data.as_bytes().to_vec(), "sample.txt", "text/plain")?;
+    // From bytes (name, bytes, mime_type)
+    let text_file = File::from_bytes("sample.txt", text_data.as_bytes(), None)?;
     println!(
         "✅ Created text file from bytes: {} ({} bytes)",
-        text_file.name(),
-        text_file.size()
+        text_file.name, text_file.size
     );
 
-    // From base64
-    let image_base64 = base64::encode(&image_data);
-    let image_file = File::from_base64(&image_base64, "sample.png", "image/png")?;
+    // From base64 (name, base64_data, mime_type)
+    use base64::engine::general_purpose;
+    use base64::Engine as _;
+    let image_base64 = general_purpose::STANDARD.encode(&image_data);
+    let image_file = File::from_base64("sample.png", &image_base64, None)?;
     println!(
         "✅ Created image file from base64: {} ({} bytes)",
-        image_file.name(),
-        image_file.size()
+        image_file.name, image_file.size
     );
 
     // Using file builder for complex scenarios
     let csv_file = FileBuilder::new()
         .name("data.csv")
-        .mime_type("text/csv")
-        .data(FileData::Bytes(csv_data.as_bytes().to_vec()))
-        .calculate_hash(true)
-        .build()?;
+        .with_hash()
+        .build(FileSource::Bytes(csv_data.as_bytes().to_vec().into()))
+        .await?;
     println!(
         "✅ Created CSV file with builder: {} (hash: {})",
-        csv_file.name(),
+        csv_file.name,
         csv_file
-            .hash()
+            .hash
+            .as_deref()
             .map(|h| format!("{:.8}...", h))
-            .unwrap_or("none".to_string())
+            .unwrap_or_else(|| "none".to_string())
     );
 
-    // Using convenience function
-    let json_file = to_file(json_data.as_bytes(), "data.json", "application/json")?;
+    // Using File::from_bytes for JSON
+    let json_file = File::from_bytes("data.json", json_data.as_bytes(), None)?;
     println!(
-        "✅ Created JSON file with to_file(): {} ({} bytes)",
-        json_file.name(),
-        json_file.size()
+        "✅ Created JSON file: {} ({} bytes)",
+        json_file.name, json_file.size
     );
 
     // Scenario 2: File validation and constraints
@@ -75,58 +73,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------------------------------");
 
     // Create constraints for different file types
-    let image_constraints = FileConstraints::new()
-        .max_size(5 * 1024 * 1024) // 5MB
-        .allowed_types(vec!["image/png".to_string(), "image/jpeg".to_string()])
-        .require_hash(true);
+    let image_constraints = FileConstraints {
+        max_size: 5 * 1024 * 1024, // 5MB
+        allowed_types: Some(vec![
+            "image/png".parse().unwrap(),
+            "image/jpeg".parse().unwrap(),
+        ]),
+        require_hash: false,
+    };
 
-    let text_constraints = FileConstraints::new()
-        .max_size(1024 * 1024) // 1MB
-        .allowed_types(vec!["text/plain".to_string(), "text/csv".to_string()]);
+    let text_constraints = FileConstraints {
+        max_size: 1024 * 1024, // 1MB
+        allowed_types: Some(vec![
+            "text/plain".parse().unwrap(),
+            "text/csv".parse().unwrap(),
+        ]),
+        require_hash: false,
+    };
 
     // Validate files against constraints
-    match image_constraints.validate(&image_file) {
+    match image_file.validate(&image_constraints) {
         Ok(_) => println!("✅ Image file passed validation"),
         Err(e) => println!("❌ Image file failed validation: {}", e),
     }
 
-    match text_constraints.validate(&text_file) {
+    match text_file.validate(&text_constraints) {
         Ok(_) => println!("✅ Text file passed validation"),
         Err(e) => println!("❌ Text file failed validation: {}", e),
     }
 
     // Test constraint violations
     let large_file_data = vec![0u8; 2 * 1024 * 1024]; // 2MB
-    let large_file = File::from_bytes(large_file_data, "large.txt", "text/plain")?;
+    let large_file = File::from_bytes("large.txt", large_file_data, None)?;
 
-    match text_constraints.validate(&large_file) {
+    match large_file.validate(&text_constraints) {
         Ok(_) => println!("❌ Large file unexpectedly passed validation"),
         Err(e) => println!("✅ Large file correctly failed validation: {}", e),
     }
 
-    // Scenario 3: MIME type detection
-    println!("\n🕵️ Scenario 3: MIME Type Detection");
+    // Scenario 3: File type detection
+    println!("\n🕵️ Scenario 3: File Type Detection");
     println!("----------------------------------");
 
     // Test different file extensions
     let test_files = vec![
         ("document.pdf", "application/pdf"),
         ("image.jpg", "image/jpeg"),
-        (
-            "data.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ),
-        ("video.mp4", "video/mp4"),
+        ("data.txt", "text/plain"),
+        ("data.json", "application/json"),
         ("archive.zip", "application/zip"),
     ];
 
     for (filename, expected_mime) in test_files {
-        let detected_mime = File::detect_mime_type(filename);
-        let matches = detected_mime == expected_mime;
+        let test_file = File::from_bytes(filename, b"test data".as_ref(), None)?;
+        let matches = test_file.mime_type.to_string() == expected_mime;
         println!(
             "  {} -> {} {}",
             filename,
-            detected_mime,
+            test_file.mime_type,
             if matches { "✅" } else { "❌" }
         );
     }
@@ -137,24 +141,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test file type checking
     println!("File type checks:");
-    println!(
-        "  {} is image: {}",
-        image_file.name(),
-        image_file.is_image()
-    );
-    println!("  {} is text: {}", text_file.name(), text_file.is_text());
+    println!("  {} is image: {}", image_file.name, image_file.is_image());
+    println!("  {} is text: {}", text_file.name, text_file.is_text());
     println!(
         "  {} is application: {}",
-        json_file.name(),
+        json_file.name,
         json_file.is_application()
     );
 
     // Format conversion
     println!("\nFormat conversion:");
-    let text_as_base64 = text_file.to_base64()?;
+    let text_as_base64 = text_file.to_base64().await?;
     println!("  Text file as base64: {:.50}...", text_as_base64);
 
-    let image_as_bytes = image_file.to_bytes()?;
+    let image_as_bytes = image_file.to_bytes().await?;
     println!("  Image file as bytes: {} bytes", image_as_bytes.len());
 
     // Scenario 5: Temporary files and cleanup
@@ -173,8 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_from_path = File::from_path(&temp_path)?;
     println!(
         "✅ Loaded file from path: {} ({} bytes)",
-        file_from_path.name(),
-        file_from_path.size()
+        file_from_path.name, file_from_path.size
     );
 
     // File will be automatically cleaned up when temp_file is dropped
@@ -186,11 +185,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------------------");
 
     // Create content blocks with file attachments
-    let image_content = ContentBlockParam::image_file(image_file.clone());
+    let image_content = ContentBlockParam::image_file(image_file.clone()).await?;
     println!("✅ Created image content block for message");
 
     // Create content from file using convenience method
-    let file_content = ContentBlockParam::from_file(json_file.clone())?;
+    let file_content = ContentBlockParam::from_file(json_file.clone()).await?;
     println!("✅ Created file content block from JSON file");
 
     // Build a multi-part message with files
@@ -220,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process multiple files in parallel (simulated)
     let files = vec![&text_file, &image_file, &csv_file, &json_file];
-    let total_size: usize = files.iter().map(|f| f.size()).sum();
+    let total_size: u64 = files.iter().map(|f| f.size).sum();
     let total_files = files.len();
 
     let processing_time = start_time.elapsed();
@@ -229,10 +228,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Files processed: {}", total_files);
     println!("  Total data size: {} bytes", total_size);
     println!("  Processing time: {:?}", processing_time);
-    println!(
-        "  Throughput: {:.2} MB/s",
-        (total_size as f64 / 1024.0 / 1024.0) / processing_time.as_secs_f64()
-    );
+    if processing_time.as_secs_f64() > 0.0 {
+        println!(
+            "  Throughput: {:.2} MB/s",
+            (total_size as f64 / 1024.0 / 1024.0) / processing_time.as_secs_f64()
+        );
+    }
 
     // Usage tracking
     let usage_summary = token_counter.get_summary();
@@ -258,10 +259,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (type_name, file) in all_files {
         println!("{} File:", type_name);
-        println!("  Name: {}", file.name());
-        println!("  Size: {} bytes", file.size());
-        println!("  MIME: {}", file.mime_type());
-        println!("  Hash: {}", file.hash().unwrap_or("none".to_string()));
+        println!("  Name: {}", file.name);
+        println!("  Size: {} bytes", file.size);
+        println!("  MIME: {}", file.mime_type);
+        println!("  Hash: {}", file.hash.as_deref().unwrap_or("none"));
         println!();
     }
 

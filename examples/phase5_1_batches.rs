@@ -1,7 +1,7 @@
 use anthropic_sdk::{
-    Anthropic, AnthropicError, BatchCreateParams, BatchError, BatchListParams, BatchRequest,
-    BatchRequestCounts, BatchResponse, BatchResponseBody, BatchResult, BatchStatus, ContentBlock,
-    Message, MessageBatch, Role, StopReason, Usage,
+    Anthropic, BatchCreateParams, BatchError, BatchListParams, BatchRequest, BatchRequestCounts,
+    BatchResponse, BatchResponseBody, BatchResult, BatchStatus, ContentBlock, Message,
+    MessageBatch, Role, StopReason, Usage,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================================");
 
     // Initialize client (would normally use real API key)
-    let client = match Anthropic::from_env() {
+    let _client = match Anthropic::from_env() {
         Ok(client) => client,
         Err(_) => {
             println!("⚠️  ANTHROPIC_API_KEY not set. This is a demo of the batch API structure.");
@@ -194,7 +194,7 @@ async fn simulate_batch_processing() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn simulate_batch_progress(batch: &MessageBatch) {
+async fn simulate_batch_progress(_batch: &MessageBatch) {
     println!("📈 Monitoring batch progress...");
 
     let progress_steps = [
