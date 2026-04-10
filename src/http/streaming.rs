@@ -3,16 +3,16 @@
 //! This module handles the HTTP layer for streaming responses from the Anthropic API,
 //! parsing SSE events and converting them into MessageStreamEvent objects.
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use futures::Stream;
 use pin_project::pin_project;
 use reqwest::Response;
 use serde_json;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 
-use crate::types::{MessageStreamEvent, AnthropicError, Result};
+use crate::types::{AnthropicError, MessageStreamEvent, Result};
 
 /// Configuration for SSE streaming requests.
 #[derive(Debug, Clone)]
@@ -47,16 +47,16 @@ pub struct HttpStreamClient {
     /// The underlying SSE event stream
     #[pin]
     event_stream: Pin<Box<dyn Stream<Item = Result<MessageStreamEvent>> + Send>>,
-    
+
     /// Broadcast sender for distributing events
     event_sender: broadcast::Sender<MessageStreamEvent>,
-    
+
     /// Configuration for the stream
     config: StreamConfig,
-    
+
     /// Whether the stream has ended
     ended: bool,
-    
+
     /// Request ID from response headers
     request_id: Option<String>,
 }
@@ -67,7 +67,8 @@ impl HttpStreamClient {
     /// This method takes a reqwest Response (which should be from a streaming endpoint)
     /// and converts it into a stream of MessageStreamEvent objects.
     pub async fn from_response(response: Response, config: StreamConfig) -> Result<Self> {
-        let request_id = response.headers()
+        let request_id = response
+            .headers()
             .get("request-id")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
@@ -103,7 +104,7 @@ impl HttpStreamClient {
 
         // Use eventsource-stream to parse SSE events
         use eventsource_stream::Eventsource;
-        
+
         let sse_stream = byte_stream
             .eventsource()
             .map(|result| {
@@ -277,12 +278,12 @@ impl Stream for HttpStreamClient {
             Poll::Ready(Some(Ok(event))) => {
                 // Broadcast the event to all subscribers
                 let _ = this.event_sender.send(event.clone());
-                
+
                 // Check if this is a terminal event
                 if matches!(event, MessageStreamEvent::MessageStop) {
                     *this.ended = true;
                 }
-                
+
                 Poll::Ready(Some(Ok(event)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
@@ -342,8 +343,12 @@ impl StreamRequestBuilder {
         endpoint: &str,
         body: &T,
     ) -> Result<HttpStreamClient> {
-        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint.trim_start_matches('/'));
-        
+        let url = format!(
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            endpoint.trim_start_matches('/')
+        );
+
         let mut headers = self.headers;
         headers.insert(
             reqwest::header::ACCEPT,
@@ -361,7 +366,9 @@ impl StreamRequestBuilder {
             .json(body)
             .send()
             .await
-            .map_err(|e| AnthropicError::Connection { message: e.to_string() })?;
+            .map_err(|e| AnthropicError::Connection {
+                message: e.to_string(),
+            })?;
 
         HttpStreamClient::from_response(response, self.config).await
     }
@@ -399,10 +406,10 @@ mod tests {
     async fn test_sse_event_parsing() {
         // Test that we can parse a sample SSE event
         let event_data = r#"{"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-latest","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"server_tool_use":null,"service_tier":null}}}"#;
-        
+
         let parsed: std::result::Result<MessageStreamEvent, _> = serde_json::from_str(event_data);
         assert!(parsed.is_ok());
-        
+
         if let Ok(MessageStreamEvent::MessageStart { message }) = parsed {
             assert_eq!(message.id, "msg_123");
             assert_eq!(message.usage.input_tokens, 10);
@@ -410,4 +417,4 @@ mod tests {
             panic!("Expected MessageStart event");
         }
     }
-} 
+}

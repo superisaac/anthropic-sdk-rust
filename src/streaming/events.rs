@@ -3,7 +3,7 @@
 //! This module defines the event types and handlers used by the MessageStream
 //! to manage different types of callbacks and event dispatching.
 
-use crate::types::{Message, MessageStreamEvent, AnthropicError};
+use crate::types::{AnthropicError, Message, MessageStreamEvent};
 
 /// Types of events that can be handled by MessageStream.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -33,25 +33,25 @@ pub enum EventType {
 pub enum EventHandler {
     /// Handler for stream events - receives event and current message snapshot
     StreamEvent(Box<dyn Fn(&MessageStreamEvent, &Message) + Send + Sync>),
-    
+
     /// Handler for text deltas - receives delta text and current accumulated text
     Text(Box<dyn Fn(&str, &str) + Send + Sync>),
-    
+
     /// Handler for complete messages
     Message(Box<dyn Fn(&Message) + Send + Sync>),
-    
+
     /// Handler for the final message when stream completes
     FinalMessage(Box<dyn Fn(&Message) + Send + Sync>),
-    
+
     /// Handler for errors
     Error(Box<dyn Fn(&AnthropicError) + Send + Sync>),
-    
+
     /// Handler for stream end
     End(Box<dyn Fn() + Send + Sync>),
-    
+
     /// Handler for connection established
     Connect(Box<dyn Fn() + Send + Sync>),
-    
+
     /// Handler for stream abort
     Abort(Box<dyn Fn(&AnthropicError) + Send + Sync>),
 }
@@ -87,7 +87,7 @@ mod tests {
         let mut map: HashMap<EventType, Vec<String>> = HashMap::new();
         map.insert(EventType::Text, vec!["handler1".to_string()]);
         map.insert(EventType::Error, vec!["handler2".to_string()]);
-        
+
         assert!(map.contains_key(&EventType::Text));
         assert!(map.contains_key(&EventType::Error));
         assert!(!map.contains_key(&EventType::Connect));
@@ -100,4 +100,4 @@ mod tests {
         assert!(debug_str.contains("Text"));
         assert!(debug_str.contains("<callback>"));
     }
-} 
+}

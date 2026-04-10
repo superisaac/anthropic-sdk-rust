@@ -3,10 +3,10 @@
 //! This module provides abstractions for managing multi-turn conversations
 //! that involve tool use, handling the back-and-forth between Claude and tools.
 
-use std::sync::Arc;
+use super::{ToolError, ToolExecutionConfig, ToolExecutor, ToolOperationResult, ToolRegistry};
 use crate::client::Anthropic;
-use crate::types::{Message, ToolChoice, ToolResult, MessageCreateBuilder};
-use super::{ToolRegistry, ToolExecutor, ToolExecutionConfig, ToolOperationResult, ToolError};
+use crate::types::{Message, MessageCreateBuilder, ToolChoice, ToolResult};
+use std::sync::Arc;
 
 /// High-level tool conversation manager.
 ///
@@ -15,13 +15,13 @@ use super::{ToolRegistry, ToolExecutor, ToolExecutionConfig, ToolOperationResult
 pub struct ToolConversation {
     /// The Anthropic client for API calls.
     client: Arc<Anthropic>,
-    
+
     /// Tool registry for executing tools.
     registry: Arc<ToolRegistry>,
-    
+
     /// Tool executor for advanced execution features.
     executor: ToolExecutor,
-    
+
     /// Configuration for the conversation.
     config: ConversationConfig,
 }
@@ -31,19 +31,19 @@ pub struct ToolConversation {
 pub struct ConversationConfig {
     /// Maximum number of conversation turns.
     pub max_turns: usize,
-    
+
     /// Model to use for the conversation.
     pub model: String,
-    
+
     /// Maximum tokens per response.
     pub max_tokens: u32,
-    
+
     /// Tool choice strategy.
     pub tool_choice: Option<ToolChoice>,
-    
+
     /// Whether to automatically execute tools.
     pub auto_execute_tools: bool,
-    
+
     /// Tool execution configuration.
     pub execution_config: ToolExecutionConfig,
 }
@@ -94,20 +94,22 @@ impl ToolConversation {
     /// If Claude uses tools, they will be automatically executed if `auto_execute_tools` is enabled.
     pub async fn start(&self, user_message: impl Into<String>) -> ToolOperationResult<Message> {
         let tools = self.registry.get_tool_definitions();
-        
+
         let mut builder = MessageCreateBuilder::new(&self.config.model, self.config.max_tokens)
             .user(user_message.into());
 
         // Add tools if available
         if !tools.is_empty() {
             builder = builder.tools(tools);
-            
+
             if let Some(ref tool_choice) = self.config.tool_choice {
                 builder = builder.tool_choice(tool_choice.clone());
             }
         }
 
-        let message = self.client.messages()
+        let message = self
+            .client
+            .messages()
             .create(builder.build())
             .await
             .map_err(|e| ToolError::ExecutionFailed { source: e.into() })?;
@@ -119,9 +121,12 @@ impl ToolConversation {
     ///
     /// This method takes a message that may contain tool use requests, executes the tools,
     /// and returns Claude's response incorporating the tool results.
-    pub async fn continue_with_tools(&self, message: &Message) -> ToolOperationResult<Option<Message>> {
+    pub async fn continue_with_tools(
+        &self,
+        message: &Message,
+    ) -> ToolOperationResult<Option<Message>> {
         let tool_uses = self.executor.extract_tool_uses(message);
-        
+
         if tool_uses.is_empty() {
             return Ok(None);
         }
@@ -133,7 +138,7 @@ impl ToolConversation {
 
         // Execute all tools
         let tool_results = self.executor.execute_multiple(&tool_uses).await;
-        
+
         // Convert execution results to tool results
         let mut results = Vec::new();
         for (tool_use, result) in tool_uses.iter().zip(tool_results.iter()) {
@@ -149,47 +154,55 @@ impl ToolConversation {
         }
 
         // Create a follow-up message with tool results
-        use crate::types::messages::{MessageContent, ContentBlockParam};
-        
+        use crate::types::messages::{ContentBlockParam, MessageContent};
+
         // Convert tool results to content blocks
-        let tool_result_blocks: Vec<ContentBlockParam> = results.into_iter().map(|result| {
-            // Convert ToolResultContent to String for ContentBlockParam::ToolResult
-            let content_string = match result.content {
-                crate::types::ToolResultContent::Text(text) => Some(text),
-                crate::types::ToolResultContent::Json(json) => Some(json.to_string()),
-                crate::types::ToolResultContent::Blocks(blocks) => {
-                    // Convert blocks to a simple text representation
-                    let text_parts: Vec<String> = blocks.into_iter().map(|block| {
-                        match block {
-                            crate::types::ToolResultBlock::Text { text } => text,
-                            crate::types::ToolResultBlock::Image { .. } => "[Image]".to_string(),
-                        }
-                    }).collect();
-                    Some(text_parts.join("\n"))
+        let tool_result_blocks: Vec<ContentBlockParam> = results
+            .into_iter()
+            .map(|result| {
+                // Convert ToolResultContent to String for ContentBlockParam::ToolResult
+                let content_string = match result.content {
+                    crate::types::ToolResultContent::Text(text) => Some(text),
+                    crate::types::ToolResultContent::Json(json) => Some(json.to_string()),
+                    crate::types::ToolResultContent::Blocks(blocks) => {
+                        // Convert blocks to a simple text representation
+                        let text_parts: Vec<String> = blocks
+                            .into_iter()
+                            .map(|block| match block {
+                                crate::types::ToolResultBlock::Text { text } => text,
+                                crate::types::ToolResultBlock::Image { .. } => {
+                                    "[Image]".to_string()
+                                }
+                            })
+                            .collect();
+                        Some(text_parts.join("\n"))
+                    }
+                };
+
+                ContentBlockParam::ToolResult {
+                    tool_use_id: result.tool_use_id,
+                    content: content_string,
+                    is_error: result.is_error,
                 }
-            };
-            
-            ContentBlockParam::ToolResult {
-                tool_use_id: result.tool_use_id,
-                content: content_string,
-                is_error: result.is_error,
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         let mut builder = MessageCreateBuilder::new(&self.config.model, self.config.max_tokens)
             .user(MessageContent::Blocks(tool_result_blocks));
-            
+
         // Add tools again for potential follow-up tool use
         let tools = self.registry.get_tool_definitions();
         if !tools.is_empty() {
             builder = builder.tools(tools);
-            
+
             if let Some(ref tool_choice) = self.config.tool_choice {
                 builder = builder.tool_choice(tool_choice.clone());
             }
         }
-        
-        let next_message = self.client.messages()
+
+        let next_message = self
+            .client
+            .messages()
             .create(builder.build())
             .await
             .map_err(|e| ToolError::ExecutionFailed { source: e.into() })?;
@@ -201,7 +214,10 @@ impl ToolConversation {
     ///
     /// This method manages the entire conversation flow, automatically executing tools
     /// and continuing the conversation until Claude provides a final response.
-    pub async fn execute_until_complete(&self, initial_message: impl Into<String>) -> ToolOperationResult<Message> {
+    pub async fn execute_until_complete(
+        &self,
+        initial_message: impl Into<String>,
+    ) -> ToolOperationResult<Message> {
         let mut current_message = self.start(initial_message).await?;
         let mut turn_count = 1;
 
@@ -245,10 +261,9 @@ impl ToolConversation {
     /// Update the conversation configuration.
     pub fn set_config(&mut self, config: ConversationConfig) {
         self.config = config;
-        self.executor.set_config(self.config.execution_config.clone());
+        self.executor
+            .set_config(self.config.execution_config.clone());
     }
-
-
 }
 
 /// Builder for creating conversation configurations.
@@ -342,4 +357,4 @@ mod tests {
         assert_eq!(config.tool_choice, Some(ToolChoice::Auto));
         assert!(config.auto_execute_tools);
     }
-} 
+}

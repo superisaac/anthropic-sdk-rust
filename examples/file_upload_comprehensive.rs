@@ -1,12 +1,12 @@
 use anthropic_sdk::{
-    Anthropic, MessageCreateBuilder, ContentBlockParam, MessageContent,
-    File, FileSource, FileBuilder, FileConstraints, to_file, FileError,
+    to_file, Anthropic, ContentBlockParam, File, FileBuilder, FileConstraints, FileError,
+    FileSource, MessageContent, MessageCreateBuilder,
 };
+use base64::Engine;
 use bytes::Bytes;
 use mime::Mime;
 use std::path::Path;
 use tokio::fs;
-use base64::Engine;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,16 +18,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demo 1: Create files from different sources
     demo_file_creation().await?;
-    
+
     // Demo 2: File validation and constraints
     demo_file_validation().await?;
-    
+
     // Demo 3: MIME type detection
     demo_mime_detection().await?;
-    
+
     // Demo 4: File processing utilities
     demo_file_processing().await?;
-    
+
     // Demo 5: Integration with messages (mock - requires API key)
     demo_message_integration().await?;
 
@@ -69,7 +69,8 @@ async fn demo_file_creation() -> Result<(), Box<dyn std::error::Error>> {
         FileSource::Bytes(Bytes::from_static(b"Convenient creation")),
         Some("convenient.txt".to_string()),
         Some(mime::TEXT_PLAIN),
-    ).await?;
+    )
+    .await?;
     println!("✓ Created with to_file(): {}", convenient_file);
 
     println!();
@@ -92,7 +93,10 @@ async fn demo_file_validation() -> Result<(), Box<dyn std::error::Error>> {
 
     match large_file.validate(&strict_constraints) {
         Err(FileError::TooLarge { size, max_size }) => {
-            println!("✓ Size validation works: {} bytes > {} bytes limit", size, max_size);
+            println!(
+                "✓ Size validation works: {} bytes > {} bytes limit",
+                size, max_size
+            );
         }
         _ => println!("❌ Size validation failed"),
     }
@@ -188,7 +192,7 @@ async fn demo_message_integration() -> Result<(), Box<dyn std::error::Error>> {
     // Create a sample image file (mock JPEG)
     let jpeg_data = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]; // JPEG header
     let image_file = File::from_bytes("chart.jpg", Bytes::from(jpeg_data), Some(mime::IMAGE_JPEG))?;
-    
+
     // Create content blocks with file
     let image_block = ContentBlockParam::image_file(image_file).await?;
     let text_block = ContentBlockParam::text("Please analyze this chart");
@@ -223,12 +227,23 @@ async fn demo_message_integration() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ File integration with messages working correctly");
 
     // Demo: Multiple file types in one message
-    let text_file = File::from_bytes("document.txt", Bytes::from_static(b"Document content"), None)?;
+    let text_file = File::from_bytes(
+        "document.txt",
+        Bytes::from_static(b"Document content"),
+        None,
+    )?;
     let pdf_data = vec![0x25, 0x50, 0x44, 0x46]; // PDF magic bytes
-    let pdf_file = File::from_bytes("report.pdf", Bytes::from(pdf_data), Some("application/pdf".parse()?))?;
+    let pdf_file = File::from_bytes(
+        "report.pdf",
+        Bytes::from(pdf_data),
+        Some("application/pdf".parse()?),
+    )?;
 
     println!("✓ Created multiple file types:");
-    println!("  - Text file: {} ({})", text_file.name, text_file.mime_type);
+    println!(
+        "  - Text file: {} ({})",
+        text_file.name, text_file.mime_type
+    );
     println!("  - PDF file: {} ({})", pdf_file.name, pdf_file.mime_type);
 
     println!();
@@ -273,13 +288,14 @@ async fn advanced_file_operations() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a large file for testing
     let large_content = "x".repeat(1024 * 100); // 100KB
-    let mut large_file = File::from_bytes("large.txt", Bytes::from(large_content.into_bytes()), None)?;
+    let mut large_file =
+        File::from_bytes("large.txt", Bytes::from(large_content.into_bytes()), None)?;
 
     // Calculate hash with timing
     let start = std::time::Instant::now();
     let hash = large_file.calculate_hash().await?;
     let duration = start.elapsed();
-    
+
     println!("✓ Hash calculation for 100KB file: {:?}", duration);
     println!("  Hash: {}", hash);
 
@@ -299,4 +315,4 @@ async fn advanced_file_operations() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-} 
+}

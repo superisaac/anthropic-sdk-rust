@@ -6,16 +6,15 @@
 
 pub mod events;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use futures::Stream;
 use pin_project::pin_project;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::types::{
-    Message, MessageStreamEvent, ContentBlock, ContentBlockDelta, 
-    AnthropicError, Result
+    AnthropicError, ContentBlock, ContentBlockDelta, Message, MessageStreamEvent, Result,
 };
 
 use self::events::{EventHandler, EventType};
@@ -81,30 +80,30 @@ use self::events::{EventHandler, EventType};
 pub struct MessageStream {
     /// Current accumulated message snapshot
     current_message: Arc<Mutex<Option<Message>>>,
-    
+
     /// Event handlers for different event types
     event_handlers: Arc<Mutex<HashMap<EventType, Vec<EventHandler>>>>,
-    
+
     /// Broadcast channel for distributing events to handlers
     event_sender: broadcast::Sender<MessageStreamEvent>,
-    
+
     /// Stream for events from the underlying HTTP stream
     #[pin]
     event_stream: BroadcastStream<MessageStreamEvent>,
-    
+
     /// Channel for signaling when the stream ends
     completion_sender: Option<oneshot::Sender<Result<Message>>>,
     completion_receiver: oneshot::Receiver<Result<Message>>,
-    
+
     /// Whether the stream has ended
     ended: Arc<Mutex<bool>>,
-    
+
     /// Whether an error occurred
     errored: Arc<Mutex<bool>>,
-    
+
     /// Whether the stream was aborted by the user
     aborted: Arc<Mutex<bool>>,
-    
+
     /// Response metadata
     response: Option<reqwest::Response>,
     request_id: Option<String>,
@@ -117,7 +116,7 @@ impl MessageStream {
     pub fn new(response: reqwest::Response, request_id: Option<String>) -> Self {
         let (event_sender, event_receiver) = broadcast::channel(1000);
         let (completion_sender, completion_receiver) = oneshot::channel();
-        
+
         Self {
             current_message: Arc::new(Mutex::new(None)),
             event_handlers: Arc::new(Mutex::new(HashMap::new())),
@@ -132,31 +131,33 @@ impl MessageStream {
             request_id,
         }
     }
-    
+
     /// Create a new MessageStream from an HttpStreamClient.
     ///
     /// This connects a real HTTP stream to the MessageStream, providing
     /// proper streaming functionality for real-time response processing.
-    pub fn from_http_stream(mut http_stream: crate::http::streaming::HttpStreamClient) -> Result<Self> {
+    pub fn from_http_stream(
+        mut http_stream: crate::http::streaming::HttpStreamClient,
+    ) -> Result<Self> {
         let (event_sender, event_receiver) = broadcast::channel(1000);
         let (completion_sender, completion_receiver) = oneshot::channel();
-        
+
         let current_message = Arc::new(Mutex::new(None));
         let ended = Arc::new(Mutex::new(false));
         let errored = Arc::new(Mutex::new(false));
         let request_id = http_stream.request_id().map(|s| s.to_string());
-        
+
         // Clone references for the background task
         let current_message_clone = current_message.clone();
         let ended_clone = ended.clone();
         let errored_clone = errored.clone();
         let event_sender_clone = event_sender.clone();
-        
+
         // Spawn task to process HTTP stream events
         tokio::spawn(async move {
             use futures::StreamExt;
             let mut final_message: Option<crate::types::Message> = None;
-            
+
             while let Some(event_result) = http_stream.next().await {
                 match event_result {
                     Ok(event) => {
@@ -166,35 +167,53 @@ impl MessageStream {
                                 *current_message_clone.lock().unwrap() = Some(message.clone());
                                 final_message = Some(message.clone());
                             }
-                            crate::types::MessageStreamEvent::ContentBlockStart { content_block, index } => {
+                            crate::types::MessageStreamEvent::ContentBlockStart {
+                                content_block,
+                                index,
+                            } => {
                                 if let Some(ref mut msg) = *current_message_clone.lock().unwrap() {
                                     while msg.content.len() <= *index {
-                                        msg.content.push(crate::types::ContentBlock::Text { text: String::new() });
+                                        msg.content.push(crate::types::ContentBlock::Text {
+                                            text: String::new(),
+                                        });
                                     }
                                     msg.content[*index] = content_block.clone();
                                 }
                                 if let Some(ref mut msg) = final_message.as_mut() {
                                     while msg.content.len() <= *index {
-                                        msg.content.push(crate::types::ContentBlock::Text { text: String::new() });
+                                        msg.content.push(crate::types::ContentBlock::Text {
+                                            text: String::new(),
+                                        });
                                     }
                                     msg.content[*index] = content_block.clone();
                                 }
                             }
-                            crate::types::MessageStreamEvent::ContentBlockDelta { delta, index } => {
+                            crate::types::MessageStreamEvent::ContentBlockDelta {
+                                delta,
+                                index,
+                            } => {
                                 if let Some(ref mut msg) = *current_message_clone.lock().unwrap() {
                                     if let Some(content_block) = msg.content.get_mut(*index) {
-                                        if let (crate::types::ContentBlock::Text { text }, 
-                                               crate::types::ContentBlockDelta::TextDelta { text: delta_text }) = 
-                                            (content_block, delta) {
+                                        if let (
+                                            crate::types::ContentBlock::Text { text },
+                                            crate::types::ContentBlockDelta::TextDelta {
+                                                text: delta_text,
+                                            },
+                                        ) = (content_block, delta)
+                                        {
                                             text.push_str(delta_text);
                                         }
                                     }
                                 }
                                 if let Some(ref mut msg) = final_message.as_mut() {
                                     if let Some(content_block) = msg.content.get_mut(*index) {
-                                        if let (crate::types::ContentBlock::Text { text }, 
-                                               crate::types::ContentBlockDelta::TextDelta { text: delta_text }) = 
-                                            (content_block, delta) {
+                                        if let (
+                                            crate::types::ContentBlock::Text { text },
+                                            crate::types::ContentBlockDelta::TextDelta {
+                                                text: delta_text,
+                                            },
+                                        ) = (content_block, delta)
+                                        {
                                             text.push_str(delta_text);
                                         }
                                     }
@@ -232,9 +251,11 @@ impl MessageStream {
                                 if let Some(message) = final_message.clone() {
                                     let _ = completion_sender.send(Ok(message));
                                 } else {
-                                    let _ = completion_sender.send(Err(crate::types::AnthropicError::StreamError(
-                                        "Stream ended without message".to_string()
-                                    )));
+                                    let _ = completion_sender.send(Err(
+                                        crate::types::AnthropicError::StreamError(
+                                            "Stream ended without message".to_string(),
+                                        ),
+                                    ));
                                 }
                                 // Send final event and break
                                 let _ = event_sender_clone.send(event);
@@ -242,7 +263,7 @@ impl MessageStream {
                             }
                             _ => {}
                         }
-                        
+
                         // Send event to broadcast channel for callbacks
                         let _ = event_sender_clone.send(event);
                     }
@@ -254,7 +275,7 @@ impl MessageStream {
                 }
             }
         });
-        
+
         Ok(Self {
             current_message,
             event_handlers: Arc::new(Mutex::new(HashMap::new())),
@@ -269,7 +290,7 @@ impl MessageStream {
             request_id,
         })
     }
-    
+
     /// Register a callback for text delta events.
     ///
     /// The callback receives two parameters:
@@ -292,7 +313,7 @@ impl MessageStream {
     {
         self.on(EventType::Text, EventHandler::Text(Box::new(callback)))
     }
-    
+
     /// Register a callback for stream events.
     ///
     /// This provides access to all raw stream events and the current message snapshot.
@@ -315,9 +336,12 @@ impl MessageStream {
     where
         F: Fn(&MessageStreamEvent, &Message) + Send + Sync + 'static,
     {
-        self.on(EventType::StreamEvent, EventHandler::StreamEvent(Box::new(callback)))
+        self.on(
+            EventType::StreamEvent,
+            EventHandler::StreamEvent(Box::new(callback)),
+        )
     }
-    
+
     /// Register a callback for when a complete message is received.
     ///
     /// # Examples
@@ -333,9 +357,12 @@ impl MessageStream {
     where
         F: Fn(&Message) + Send + Sync + 'static,
     {
-        self.on(EventType::Message, EventHandler::Message(Box::new(callback)))
+        self.on(
+            EventType::Message,
+            EventHandler::Message(Box::new(callback)),
+        )
     }
-    
+
     /// Register a callback for when the final message is complete.
     ///
     /// # Examples
@@ -351,9 +378,12 @@ impl MessageStream {
     where
         F: Fn(&Message) + Send + Sync + 'static,
     {
-        self.on(EventType::FinalMessage, EventHandler::FinalMessage(Box::new(callback)))
+        self.on(
+            EventType::FinalMessage,
+            EventHandler::FinalMessage(Box::new(callback)),
+        )
     }
-    
+
     /// Register a callback for errors.
     ///
     /// # Examples
@@ -371,7 +401,7 @@ impl MessageStream {
     {
         self.on(EventType::Error, EventHandler::Error(Box::new(callback)))
     }
-    
+
     /// Register a callback for when the stream ends.
     ///
     /// # Examples
@@ -389,16 +419,19 @@ impl MessageStream {
     {
         self.on(EventType::End, EventHandler::End(Box::new(callback)))
     }
-    
+
     /// Generic method to register event handlers.
     fn on(self, event_type: EventType, handler: EventHandler) -> Self {
         {
             let mut handlers = self.event_handlers.lock().unwrap();
-            handlers.entry(event_type).or_insert_with(Vec::new).push(handler);
+            handlers
+                .entry(event_type)
+                .or_insert_with(Vec::new)
+                .push(handler);
         }
         self
     }
-    
+
     /// Wait for the stream to complete and return the final message.
     ///
     /// This method will block until the stream ends and return the accumulated message.
@@ -413,10 +446,11 @@ impl MessageStream {
     /// # }
     /// ```
     pub async fn final_message(self) -> Result<Message> {
-        self.completion_receiver.await
+        self.completion_receiver
+            .await
             .map_err(|_| AnthropicError::StreamError("Stream ended unexpectedly".to_string()))?
     }
-    
+
     /// Wait for the stream to complete without returning the message.
     ///
     /// This is useful when you're processing events with callbacks and just need
@@ -433,43 +467,44 @@ impl MessageStream {
     /// # }
     /// ```
     pub async fn done(self) -> Result<()> {
-        self.completion_receiver.await
+        self.completion_receiver
+            .await
             .map_err(|_| AnthropicError::StreamError("Stream ended unexpectedly".to_string()))?
             .map(|_| ())
     }
-    
+
     /// Get the current accumulated message snapshot.
     ///
     /// Returns `None` if the stream hasn't started or no message has been received yet.
     pub fn current_message(&self) -> Option<Message> {
         self.current_message.lock().unwrap().clone()
     }
-    
+
     /// Check if the stream has ended.
     pub fn ended(&self) -> bool {
         *self.ended.lock().unwrap()
     }
-    
+
     /// Check if an error occurred.
     pub fn errored(&self) -> bool {
         *self.errored.lock().unwrap()
     }
-    
+
     /// Check if the stream was aborted.
     pub fn aborted(&self) -> bool {
         *self.aborted.lock().unwrap()
     }
-    
+
     /// Get the response metadata.
     pub fn response(&self) -> Option<&reqwest::Response> {
         self.response.as_ref()
     }
-    
+
     /// Get the request ID.
     pub fn request_id(&self) -> Option<&str> {
         self.request_id.as_deref()
     }
-    
+
     /// Abort the stream.
     ///
     /// This will cancel the underlying HTTP request and mark the stream as aborted.
@@ -477,7 +512,7 @@ impl MessageStream {
         *self.aborted.lock().unwrap() = true;
         // In a real implementation, this would cancel the HTTP request
     }
-    
+
     /// Process a stream event and update the internal state.
     ///
     /// This method accumulates message content from incremental updates and
@@ -489,11 +524,16 @@ impl MessageStream {
             MessageStreamEvent::MessageStart { message } => {
                 *self.current_message.lock().unwrap() = Some(message.clone());
             }
-            MessageStreamEvent::ContentBlockStart { content_block, index } => {
+            MessageStreamEvent::ContentBlockStart {
+                content_block,
+                index,
+            } => {
                 if let Some(ref mut msg) = *self.current_message.lock().unwrap() {
                     // Ensure the content array is large enough
                     while msg.content.len() <= *index {
-                        msg.content.push(ContentBlock::Text { text: String::new() });
+                        msg.content.push(ContentBlock::Text {
+                            text: String::new(),
+                        });
                     }
                     msg.content[*index] = content_block.clone();
                 }
@@ -525,24 +565,31 @@ impl MessageStream {
             }
             _ => {}
         }
-        
+
         // Dispatch event to handlers
         self.dispatch_event(&event)?;
-        
+
         // Send event to broadcast channel for async iteration
         let _ = self.event_sender.send(event);
-        
+
         Ok(())
     }
-    
+
     /// Apply a content block delta to update the content.
     #[allow(dead_code)]
-    fn apply_delta(&self, content_block: &mut ContentBlock, delta: &ContentBlockDelta) -> Result<()> {
+    fn apply_delta(
+        &self,
+        content_block: &mut ContentBlock,
+        delta: &ContentBlockDelta,
+    ) -> Result<()> {
         match (content_block, delta) {
             (ContentBlock::Text { text }, ContentBlockDelta::TextDelta { text: delta_text }) => {
                 text.push_str(delta_text);
             }
-            (ContentBlock::ToolUse { input, .. }, ContentBlockDelta::InputJsonDelta { partial_json }) => {
+            (
+                ContentBlock::ToolUse { input, .. },
+                ContentBlockDelta::InputJsonDelta { partial_json },
+            ) => {
                 // In a real implementation, we'd parse the partial JSON
                 // For now, we'll just store it as-is
                 *input = serde_json::from_str(partial_json)
@@ -554,12 +601,12 @@ impl MessageStream {
         }
         Ok(())
     }
-    
+
     /// Dispatch an event to all registered handlers.
     fn dispatch_event(&self, event: &MessageStreamEvent) -> Result<()> {
         let handlers = self.event_handlers.lock().unwrap();
         let current_message = self.current_message.lock().unwrap();
-        
+
         // Dispatch to stream event handlers
         if let Some(stream_handlers) = handlers.get(&EventType::StreamEvent) {
             for handler in stream_handlers {
@@ -570,7 +617,7 @@ impl MessageStream {
                 }
             }
         }
-        
+
         // Dispatch specific event types
         match event {
             MessageStreamEvent::ContentBlockDelta { delta, .. } => {
@@ -598,7 +645,7 @@ impl MessageStream {
                         }
                     }
                 }
-                
+
                 // Send final message
                 if let Some(ref msg) = *current_message {
                     if let Some(final_handlers) = handlers.get(&EventType::FinalMessage) {
@@ -612,13 +659,14 @@ impl MessageStream {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the accumulated text from all text content blocks.
     fn get_accumulated_text(&self, message: &Message) -> String {
-        message.content
+        message
+            .content
             .iter()
             .filter_map(|block| match block {
                 ContentBlock::Text { text } => Some(text.as_str()),
@@ -631,28 +679,25 @@ impl MessageStream {
 
 impl Stream for MessageStream {
     type Item = Result<MessageStreamEvent>;
-    
+
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         use futures::Stream as FuturesStream;
-        
+
         let this = self.project();
-        
+
         match FuturesStream::poll_next(this.event_stream, cx) {
-            std::task::Poll::Ready(Some(Ok(event))) => {
-                std::task::Poll::Ready(Some(Ok(event)))
-            }
+            std::task::Poll::Ready(Some(Ok(event))) => std::task::Poll::Ready(Some(Ok(event))),
             std::task::Poll::Ready(Some(Err(err))) => {
                 // Handle any broadcast stream errors
-                std::task::Poll::Ready(Some(Err(AnthropicError::StreamError(
-                    format!("Stream error: {}", err)
-                ))))
+                std::task::Poll::Ready(Some(Err(AnthropicError::StreamError(format!(
+                    "Stream error: {}",
+                    err
+                )))))
             }
-            std::task::Poll::Ready(None) => {
-                std::task::Poll::Ready(None)
-            }
+            std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -662,34 +707,35 @@ impl Stream for MessageStream {
 mod tests {
     use super::*;
     use crate::types::{Role, Usage};
-    
+
     // For testing, we'll use a simple helper to create a dummy response
     async fn create_dummy_response() -> reqwest::Response {
         // Create a simple HTTP client and make a basic request for testing
         let client = reqwest::Client::new();
         // Use httpbin.org which provides testing endpoints
-        client.get("https://httpbin.org/status/200")
+        client
+            .get("https://httpbin.org/status/200")
             .send()
             .await
             .expect("Failed to create test response")
     }
-    
+
     #[tokio::test]
     async fn test_message_stream_creation() {
         let response = create_dummy_response().await;
         let stream = MessageStream::new(response, Some("test-request-id".to_string()));
-        
+
         assert!(!stream.ended());
         assert!(!stream.errored());
         assert!(!stream.aborted());
         assert_eq!(stream.request_id(), Some("test-request-id"));
     }
-    
+
     #[tokio::test]
     async fn test_event_processing() {
         let response = create_dummy_response().await;
         let stream = MessageStream::new(response, None);
-        
+
         // Test message start event
         let start_event = MessageStreamEvent::MessageStart {
             message: Message {
@@ -711,34 +757,34 @@ mod tests {
                 request_id: None,
             },
         };
-        
+
         stream.process_event(start_event).unwrap();
-        
+
         let current = stream.current_message().unwrap();
         assert_eq!(current.id, "msg_test");
         assert_eq!(current.role, Role::Assistant);
     }
-    
+
     #[test]
     fn test_event_handlers() {
-        use std::sync::{Arc, Mutex};
         use std::collections::HashMap;
-        
+        use std::sync::{Arc, Mutex};
+
         // Test creating event handlers directly
         let text_called = Arc::new(Mutex::new(false));
         let text_called_clone = text_called.clone();
-        
+
         let _handler = EventHandler::Text(Box::new(move |_delta, _snapshot| {
             *text_called_clone.lock().unwrap() = true;
         }));
-        
+
         // Test event type equality
         assert_eq!(EventType::Text, EventType::Text);
         assert_ne!(EventType::Text, EventType::Error);
-        
+
         // Test using event types as hash keys
         let mut map: HashMap<EventType, String> = HashMap::new();
         map.insert(EventType::Text, "text_handler".to_string());
         assert_eq!(map.get(&EventType::Text), Some(&"text_handler".to_string()));
     }
-} 
+}

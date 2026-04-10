@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use crate::types::{Tool, ToolUse, ToolResult};
-use super::{ToolFunction, ToolError, ToolOperationResult};
+use super::{ToolError, ToolFunction, ToolOperationResult};
+use crate::types::{Tool, ToolResult, ToolUse};
 
 /// Registry for managing tool definitions and their implementations.
 ///
@@ -97,7 +97,10 @@ impl ToolRegistry {
     ///
     /// Returns a vector of tool definitions that can be sent to Claude.
     pub fn get_tool_definitions(&self) -> Vec<Tool> {
-        self.tools.values().map(|entry| entry.definition.clone()).collect()
+        self.tools
+            .values()
+            .map(|entry| entry.definition.clone())
+            .collect()
     }
 
     /// Get tool definitions for specific tools by name.
@@ -115,7 +118,9 @@ impl ToolRegistry {
         names
             .into_iter()
             .filter_map(|name| {
-                self.tools.get(name.as_ref()).map(|entry| entry.definition.clone())
+                self.tools
+                    .get(name.as_ref())
+                    .map(|entry| entry.definition.clone())
             })
             .collect()
     }
@@ -165,9 +170,12 @@ impl ToolRegistry {
     /// ```
     pub async fn execute(&self, tool_use: &ToolUse) -> ToolOperationResult<ToolResult> {
         // Find the tool
-        let tool_entry = self.tools.get(&tool_use.name).ok_or_else(|| ToolError::NotFound {
-            name: tool_use.name.clone(),
-        })?;
+        let tool_entry = self
+            .tools
+            .get(&tool_use.name)
+            .ok_or_else(|| ToolError::NotFound {
+                name: tool_use.name.clone(),
+            })?;
 
         // Validate input against schema
         if let Err(validation_error) = tool_entry.definition.validate_input(&tool_use.input) {
@@ -187,27 +195,28 @@ impl ToolRegistry {
 
         // Execute with timeout
         let execution_timeout = Duration::from_secs(tool_entry.implementation.timeout_seconds());
-        
+
         match timeout(
             execution_timeout,
             tool_entry.implementation.execute(tool_use.input.clone()),
-        ).await {
+        )
+        .await
+        {
             Ok(Ok(mut result)) => {
                 // Ensure the result has the correct tool_use_id
                 result.tool_use_id = tool_use.id.clone();
                 Ok(result)
             }
-            Ok(Err(execution_error)) => {
-                Err(ToolError::ExecutionFailed { 
-                    source: execution_error 
-                })
-            }
-            Err(_) => {
-                Ok(ToolResult::error(
-                    tool_use.id.clone(),
-                    format!("Tool execution timed out after {} seconds", tool_entry.implementation.timeout_seconds()),
-                ))
-            }
+            Ok(Err(execution_error)) => Err(ToolError::ExecutionFailed {
+                source: execution_error,
+            }),
+            Err(_) => Ok(ToolResult::error(
+                tool_use.id.clone(),
+                format!(
+                    "Tool execution timed out after {} seconds",
+                    tool_entry.implementation.timeout_seconds()
+                ),
+            )),
         }
     }
 
@@ -218,7 +227,10 @@ impl ToolRegistry {
     ///
     /// # Returns
     /// Vector of tool results in the same order as the input.
-    pub async fn execute_parallel(&self, tool_uses: &[ToolUse]) -> Vec<ToolOperationResult<ToolResult>> {
+    pub async fn execute_parallel(
+        &self,
+        tool_uses: &[ToolUse],
+    ) -> Vec<ToolOperationResult<ToolResult>> {
         let futures = tool_uses.iter().map(|tool_use| self.execute(tool_use));
         futures::future::join_all(futures).await
     }
@@ -272,7 +284,10 @@ mod tests {
 
     #[async_trait]
     impl ToolFunction for TestEchoTool {
-        async fn execute(&self, input: serde_json::Value) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+        async fn execute(
+            &self,
+            input: serde_json::Value,
+        ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
             let message = input["message"].as_str().unwrap_or("No message");
             Ok(ToolResult::success("test_id", format!("Echo: {}", message)))
         }
@@ -282,19 +297,28 @@ mod tests {
 
     #[async_trait]
     impl ToolFunction for TestMathTool {
-        async fn execute(&self, input: serde_json::Value) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+        async fn execute(
+            &self,
+            input: serde_json::Value,
+        ) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
             let a = input["a"].as_f64().unwrap_or(0.0);
             let b = input["b"].as_f64().unwrap_or(0.0);
             let operation = input["operation"].as_str().unwrap_or("add");
-            
+
             let result = match operation {
                 "add" => a + b,
                 "subtract" => a - b,
                 "multiply" => a * b,
-                "divide" => if b != 0.0 { a / b } else { return Ok(ToolResult::error("test_id", "Division by zero")); },
+                "divide" => {
+                    if b != 0.0 {
+                        a / b
+                    } else {
+                        return Ok(ToolResult::error("test_id", "Division by zero"));
+                    }
+                }
                 _ => return Ok(ToolResult::error("test_id", "Unknown operation")),
             };
-            
+
             Ok(ToolResult::success("test_id", result.to_string()))
         }
     }
@@ -309,7 +333,7 @@ mod tests {
     #[test]
     fn test_tool_registration() {
         let mut registry = ToolRegistry::new();
-        
+
         let tool_def = Tool::new("echo", "Echo a message")
             .parameter("message", "string", "Message to echo")
             .required("message")
@@ -324,12 +348,13 @@ mod tests {
     #[test]
     fn test_duplicate_tool_registration() {
         let mut registry = ToolRegistry::new();
-        
-        let tool_def = Tool::new("echo", "Echo a message")
-            .build();
 
-        registry.register("echo", tool_def.clone(), Box::new(TestEchoTool)).unwrap();
-        
+        let tool_def = Tool::new("echo", "Echo a message").build();
+
+        registry
+            .register("echo", tool_def.clone(), Box::new(TestEchoTool))
+            .unwrap();
+
         // Try to register the same tool again
         let result = registry.register("echo", tool_def, Box::new(TestEchoTool));
         assert!(result.is_err());
@@ -338,13 +363,15 @@ mod tests {
     #[tokio::test]
     async fn test_tool_execution() {
         let mut registry = ToolRegistry::new();
-        
+
         let tool_def = Tool::new("echo", "Echo a message")
             .parameter("message", "string", "Message to echo")
             .required("message")
             .build();
 
-        registry.register("echo", tool_def, Box::new(TestEchoTool)).unwrap();
+        registry
+            .register("echo", tool_def, Box::new(TestEchoTool))
+            .unwrap();
 
         let tool_use = ToolUse {
             id: "test_123".to_string(),
@@ -353,20 +380,20 @@ mod tests {
         };
 
         let result = registry.execute(&tool_use).await.unwrap();
-        
+
         if let crate::types::ToolResultContent::Text(content) = result.content {
             assert_eq!(content, "Echo: Hello, World!");
         } else {
             panic!("Expected text content");
         }
-        
+
         assert_eq!(result.tool_use_id, "test_123");
     }
 
     #[tokio::test]
     async fn test_tool_not_found() {
         let registry = ToolRegistry::new();
-        
+
         let tool_use = ToolUse {
             id: "test_123".to_string(),
             name: "nonexistent".to_string(),
@@ -375,7 +402,7 @@ mod tests {
 
         let result = registry.execute(&tool_use).await;
         assert!(result.is_err());
-        
+
         if let Err(ToolError::NotFound { name }) = result {
             assert_eq!(name, "nonexistent");
         } else {
@@ -386,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn test_parallel_execution() {
         let mut registry = ToolRegistry::new();
-        
+
         let math_tool_def = Tool::new("math", "Perform math operations")
             .parameter("a", "number", "First number")
             .parameter("b", "number", "Second number")
@@ -396,7 +423,9 @@ mod tests {
             .required("operation")
             .build();
 
-        registry.register("math", math_tool_def, Box::new(TestMathTool)).unwrap();
+        registry
+            .register("math", math_tool_def, Box::new(TestMathTool))
+            .unwrap();
 
         let tool_uses = vec![
             ToolUse {
@@ -412,9 +441,9 @@ mod tests {
         ];
 
         let results = registry.execute_parallel(&tool_uses).await;
-        
+
         assert_eq!(results.len(), 2);
-        
+
         for result in results {
             assert!(result.is_ok());
         }
@@ -423,19 +452,21 @@ mod tests {
     #[test]
     fn test_get_tool_definitions() {
         let mut registry = ToolRegistry::new();
-        
-        let tool1 = Tool::new("tool1", "First tool")
-            .build();
-            
-        let tool2 = Tool::new("tool2", "Second tool")
-            .build();
 
-        registry.register("tool1", tool1, Box::new(TestEchoTool)).unwrap();
-        registry.register("tool2", tool2, Box::new(TestEchoTool)).unwrap();
+        let tool1 = Tool::new("tool1", "First tool").build();
+
+        let tool2 = Tool::new("tool2", "Second tool").build();
+
+        registry
+            .register("tool1", tool1, Box::new(TestEchoTool))
+            .unwrap();
+        registry
+            .register("tool2", tool2, Box::new(TestEchoTool))
+            .unwrap();
 
         let definitions = registry.get_tool_definitions();
         assert_eq!(definitions.len(), 2);
-        
+
         let names: Vec<&str> = definitions.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"tool1"));
         assert!(names.contains(&"tool2"));
@@ -444,21 +475,27 @@ mod tests {
     #[test]
     fn test_get_specific_tools() {
         let mut registry = ToolRegistry::new();
-        
+
         let tool1 = Tool::new("tool1", "First tool").build();
         let tool2 = Tool::new("tool2", "Second tool").build();
         let tool3 = Tool::new("tool3", "Third tool").build();
 
-        registry.register("tool1", tool1, Box::new(TestEchoTool)).unwrap();
-        registry.register("tool2", tool2, Box::new(TestEchoTool)).unwrap();
-        registry.register("tool3", tool3, Box::new(TestEchoTool)).unwrap();
+        registry
+            .register("tool1", tool1, Box::new(TestEchoTool))
+            .unwrap();
+        registry
+            .register("tool2", tool2, Box::new(TestEchoTool))
+            .unwrap();
+        registry
+            .register("tool3", tool3, Box::new(TestEchoTool))
+            .unwrap();
 
         let specific_tools = registry.get_specific_tools(["tool1", "tool3"]);
         assert_eq!(specific_tools.len(), 2);
-        
+
         let names: Vec<&str> = specific_tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"tool1"));
         assert!(names.contains(&"tool3"));
         assert!(!names.contains(&"tool2"));
     }
-} 
+}
