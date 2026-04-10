@@ -104,15 +104,12 @@ impl<'a> MessagesResource<'a> {
         // Ensure streaming is enabled
         params.stream = Some(true);
 
-        // Create authorization header - use Bearer for most cases including custom gateways
-        let auth_header = format!("Bearer {}", self.client.config().api_key);
-
         // Build the streaming request with proper authentication
         let stream_builder = StreamRequestBuilder::new(
             self.client.http_client().client().clone(),
             self.client.config().base_url.clone(),
         )
-        .header("Authorization", &auth_header)
+        .header("X-Api-Key", &self.client.config().api_key)
         .header("Content-Type", "application/json")
         .header("anthropic-version", "2023-06-01")
         .config(StreamConfig::default());
